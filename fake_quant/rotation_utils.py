@@ -226,28 +226,54 @@ def rotate_ov_proj(layer, model_type, head_num, head_dim):
     apply_exact_had_to_linear(o_proj, had_dim=-1, output=False)
 
 
+# @torch.inference_mode()
+# def rotate_model(model, args):
+#     Q = get_orthogonal_matrix(model.config.hidden_size,
+#                                                 args.rotate_mode)
+#     config = model.config
+#     num_heads = config.num_attention_heads
+#     model_dim = config.hidden_size
+#     head_dim = model_dim // num_heads
+
+
+#     model_type = model_utils.model_type_extractor(model)
+#     rotate_embeddings(model, Q)
+#     rotate_head(model, Q)
+#     utils.cleanup_memory()
+#     layers = model_utils.get_transformer_layers(model, 
+#                                                 model_type=model_type)
+#     for idx, layer in enumerate(tqdm.tqdm(layers, unit="layer", desc="Rotating")):
+#         rotate_attention_inputs(layers[idx], Q, model_type)
+#         rotate_attention_output(layers[idx], Q, model_type)
+#         rotate_mlp_input(layers[idx], Q, model_type)
+#         rotate_mlp_output(layers[idx], Q, model_type)
+#         rotate_ov_proj(layers[idx], model_type, num_heads, head_dim)
 @torch.inference_mode()
 def rotate_model(model, args):
-    Q = get_orthogonal_matrix(model.config.hidden_size,
-                                                args.rotate_mode)
+    R1 = get_orthogonal_matrix(model.config.hidden_size, args.rotate_mode)
+    if args.optimized_rotation_path is not None:
+        R_cpk = args.optimized_rotation_path
+        R1 = torch.load(R_cpk)["R1"].cuda().to(torch.float64)
     config = model.config
     num_heads = config.num_attention_heads
     model_dim = config.hidden_size
     head_dim = model_dim // num_heads
 
-
-    model_type = model_utils.model_type_extractor(model)
-    rotate_embeddings(model, Q)
-    rotate_head(model, Q)
+    rotate_embeddings(model, R1)
+    rotate_head(model, R1)
     utils.cleanup_memory()
-    layers = model_utils.get_transformer_layers(model, 
-                                                model_type=model_type)
+    layers = [layer for layer in model.model.layers]
     for idx, layer in enumerate(tqdm.tqdm(layers, unit="layer", desc="Rotating")):
-        rotate_attention_inputs(layers[idx], Q, model_type)
-        rotate_attention_output(layers[idx], Q, model_type)
-        rotate_mlp_input(layers[idx], Q, model_type)
-        rotate_mlp_output(layers[idx], Q, model_type)
-        rotate_ov_proj(layers[idx], model_type, num_heads, head_dim)
+        if args.optimized_rotation_path is not None:
+            key = f"model.layers.{idx}.self_attn.R2"
+            R2 = torch.load(R_cpk)[key].cuda().to(torch.float64)
+        else:
+            R2 = get_orthogonal_matrix(head_dim, args.rotate_mode)
+        rotate_attention_inputs(layers[idx], R1)
+        rotate_attention_output(layers[idx], R1)
+        rotate_mlp_input(layers[idx], R1)
+        rotate_mlp_output(layers[idx], R1)
+        rotate_ov_proj(layers[idx], num_heads, head_dim, R2=R2)
 
 
 @torch.inference_mode
